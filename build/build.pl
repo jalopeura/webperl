@@ -66,6 +66,13 @@ GetOptions(\my %opts,'showconf','reconfig','forceext','applyconfig',
 	'forceemperl','remakeout','dist=s','verbose')
 	or HelpMessage(-exitval=>255);
 
+# newer versions of emscripten do not set EMSCRIPTEN, but they do put emcc on the PATH, so we can get it from there
+if ($ENV{EMSDK} && ! $ENV{EMSCRIPTEN}) {
+	$ENV{EMSCRIPTEN} = `which emcc`;
+	chomp $ENV{EMSCRIPTEN};
+	$ENV{EMSCRIPTEN}=~s{/[^/]+$}{};
+}
+
 # check that emperl_config.sh has been run
 die "Please run '. emperl_config.sh' to set up the environment variables.\n"
 	unless $ENV{EMPERL_PERLVER};
@@ -84,32 +91,6 @@ dd \%C if $opts{showconf};
 
 my $VERBOSE = $opts{verbose}?1:0;
 my $needs_reconfig = !!$opts{reconfig};
-
-# ##### ##### ##### Step: Patch Emscripten ##### ##### #####
-
-{
-	my $d = pushd( dir($ENV{EMSCRIPTEN}, 'src') );
-	# Emscripten's fork() (and system()) stubs return EAGAIN, meaning "Resource temporarily unavailable".
-	# So perl will wait 5 seconds and try again, which is not helpful to us, since Emscripten doesn't support those functions at all.
-	# This patch fixes that on the Emscripten side, so the stubs return ENOTSUP.
-	# first, we need to take a guess which version of the patch to apply.
-	my $libraryjs = file($ENV{EMSCRIPTEN}, 'src', 'library.js')->slurp;
-	my $patchf;
-	if ( $libraryjs=~/\b\Q___setErrNo(ERRNO_CODES.\E(EAGAIN|ENOTSUP)\b/ )
-		{ $patchf = 'emscripten_1.38.10_eagain.patch' }
-	elsif ( $libraryjs=~/no shell available\s+setErrNo\Q({{{ cDefine('EAGAIN') }}})\E/ )
-		{ $patchf = 'emscripten_1.39.16_eagain.patch' }
-	elsif ( $libraryjs=~/\b\QcDefine('EAGAIN')\E/ ) # note that this appears in 1.38.1* versions too
-		{ $patchf = 'emscripten_1.38.28_eagain.patch' }
-	else { die "Could not figure out which library.js patch to use" }
-	#TODO Later: we should probably verify the Emscripten version too, and in the future we may need different patches for different versions
-	if ( try_patch_file( file($FindBin::Bin,$patchf) ) ) {
-		say STDERR "# Emscripten was newly patched, forcing a rebuild";
-		# not sure if the following is needed, but playing it safe:
-		run 'emcc', '--clear-cache';  # force Emscripten to rebuild libs (takes a bit of time)
-		$needs_reconfig=1;
-	}
-}
 
 # ##### ##### ##### Step: Check out Perl sources ##### ##### #####
 
@@ -258,23 +239,38 @@ if ($needs_reconfig || $opts{forceext}) {
 	my $http = HTTP::Tiny->new;
 	$C{DOWNLOADDIR}->mkpath(1);
 	for my $modname ($C{EXTENSIONS}->@*) {
-		my $apiuri = URI->new('https://fastapi.metacpan.org/v1/download_url');
-		$apiuri->path_segments( $apiuri->path_segments, $modname );
-		say STDERR "# Fetching $apiuri...";
-		my $resp1 = $http->get($apiuri);
-		die "$apiuri: $resp1->{status} $resp1->{reason}\n" unless $resp1->{success};
-		my $apiresp = decode_json($resp1->{content});
-		my $version = $apiresp->{version};
-		my $dluri = URI->new($apiresp->{download_url});
-		
-		my $file = $C{DOWNLOADDIR}->file( ($dluri->path_segments)[-1] );
-		die "I don't know what to do with this file type (yet): $file"
-			unless $file->basename=~/(?:\.tar\.gz|\.tgz)$/i;
-		
-		say STDERR "# Fetching $dluri into $file...";
-		my $resp2 = $http->mirror($dluri, $file);
-		die "$dluri: $resp2->{status} $resp2->{reason}\n" unless $resp2->{success};
-		say STDERR "# $dluri: $resp2->{status} $resp2->{reason}";
+		(my $basename = $modname)=~s/::/-/g;
+		my ($file) = (sort glob("$C{DOWNLOADDIR}/$basename-*.tar.gz"))[-1]; # get newest match (well, last-when-sorted match, anyway)
+		my $version;
+		# if we don't have the file or the user wants to redownload it
+		if ($opts{forceext} || ! -e $file) {
+			my $apiuri = URI->new('https://fastapi.metacpan.org/v1/download_url');
+			$apiuri->path_segments( $apiuri->path_segments, $modname );
+			say STDERR "# Fetching $apiuri...";
+			my $resp1 = $http->get($apiuri);
+			die "$apiuri: $resp1->{status} $resp1->{reason}\n" unless $resp1->{success};
+			my $apiresp = decode_json($resp1->{content});
+			$version = $apiresp->{version};
+			my $dluri = URI->new($apiresp->{download_url});
+
+			if (-e $file) {
+				unlink $file; # don't keep stale downloads
+			}
+			$file = $C{DOWNLOADDIR}->file( ($dluri->path_segments)[-1] );
+			die "I don't know what to do with this file type (yet): $file"
+				unless $file->basename=~/(?:\.tar\.gz|\.tgz)$/i;
+
+			say STDERR "# Fetching $dluri into $file...";
+			my $resp2 = $http->mirror($dluri, $file);
+			die "$dluri: $resp2->{status} $resp2->{reason}\n" unless $resp2->{success};
+			say STDERR "# $dluri: $resp2->{status} $resp2->{reason}";
+		}
+		# if we get here, we can use the existing file
+		else {
+			say STDERR "# Found $file ($version)...";
+			($version) = $file=~/([\d.]+)\.tar\.gz$/;
+			$file = file($file)
+		}
 		
 		my $tempd = dir( tempdir(DIR=>$C{DOWNLOADDIR}, CLEANUP => 1) );
 		{

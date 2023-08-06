@@ -52,7 +52,7 @@ $jq->ajax( '/ajaxtest', {
 	print "AJAX Success! Data: ", Dumper($data_in->toperl);
 } )->fail( sub {
 	my ($jqXHR, $textStatus, $errorThrown) = @_;
-	print "AJAX Failed! ($errorThrown)\n";
+	print "AJAX Failed! ($errorThrown->{name}: $errorThrown->{message})\n";
 } );
 
 </script>

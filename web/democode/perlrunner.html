@@ -114,7 +114,7 @@ Perl.output = function (str,chan) {
 
 function saveFile (fn, data) {
 	if (fn.substring(0,1)!='/') // if relative, make absolute
-		fn = FS.joinPath([FS.cwd(), fn]);
+		fn = PATH.join(FS.cwd(), fn);
 	try {
 		FS.writeFile(fn, data);
 	}
@@ -166,8 +166,17 @@ window.addEventListener('message', function (event) {
 });
 
 Perl.init(function () {
-	Module['thisProgram'] = 'perl';
-	FS.currentPath = ENV.HOME; // NOTE: https://github.com/kripken/emscripten/issues/5873
+	thisProgram = 'perl';
+	if (! Perl.ENV) {
+		Perl.ENV = {};
+		var env_strings = getEnvStrings();
+		for (var x of env_strings) {
+			var match = x.match(/^(.+?)=(.+)$/);
+			// match[0] is whole thing; we want the individual captured matches
+			Perl.ENV[ match[1] ] = match[2];
+		}
+	}
+	FS.currentPath = Perl.ENV.HOME; // NOTE: https://github.com/kripken/emscripten/issues/5873
 });
 
 </script>

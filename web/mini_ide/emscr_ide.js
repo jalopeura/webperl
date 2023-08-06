@@ -218,7 +218,7 @@ function make_emscr_ide_filebrowser() {
 		$.each( files.sort(), function (idx,file) {
 			if (file=='.') return;
 			if (file=='..' && fb.curpath=='/') return;
-			var fullfile = FS.joinPath([fb.curpath,file]);
+			var fullfile = PATH.join(fb.curpath,file);
 			var stat = FS.stat(fullfile);
 			var icon = "&#x1F4DC;";
 			var click;

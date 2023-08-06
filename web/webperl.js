@@ -286,10 +286,13 @@ Perl.initStepFinished = function () {
 	 * like it does from ccall - it doesn't even call the addOnExit/ATEXIT or addOnPostRun/ATPOSTRUN
 	 * handlers! So at the moment, the only reliable way I've found to catch the program exit()ing
 	 * is to patch into Emscripten's (undocumented!) Module.quit... */
-	var origQuit = Module.quit;
-	Module.quit = function (status, exception) {
+	// NOTE: emscripten now uses 'quit_' instead of 'Module.quit'
+	var origQuit = quit_;
+	quit_ = function (status, exception) {
 		console.debug("Perl: quit with",exception);
-		Module.onExit(status);
+		if (Perl.endAfterMain || status != 0) {
+			Module.onExit(status);
+		}
 		origQuit(status,exception);
 	}
 	
