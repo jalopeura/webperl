@@ -1,0 +1,11 @@
+--- Makefile.PL.orig	2023-11-16 16:45:59.000000000 -0800
++++ Makefile.PL	2023-11-16 15:17:02.000000000 -0800
+@@ -318,7 +318,7 @@
+     $xst =~ s/\$\(BASEEXT\)/Perl/g;
+     $xst .= '
+ dbixs_rev.h: DBIXS.h Driver_xst.h dbipport.h dbivport.h dbixs_rev.pl
+-	$(PERL) dbixs_rev.pl
++	$(PERL) -I../../lib dbixs_rev.pl
+ 
+ DBI.c: Perl$(OBJ_EXT)
+ 

@@ -92,6 +92,16 @@ dd \%C if $opts{showconf};
 my $VERBOSE = $opts{verbose}?1:0;
 my $needs_reconfig = !!$opts{reconfig};
 
+my %patches = map {
+	(my $basename = $_)=~s/\.patch$//;
+	( $basename, abs_path($_) );
+} glob('*.patch');
+
+# allows the user to just accept the default option
+if ( prompt("Accept all defaults? [yN]","n")=~/^\s*y/i ) {
+	$ENV{PERL_MM_USE_DEFAULT} = 1;
+}
+
 # ##### ##### ##### Step: Check out Perl sources ##### ##### #####
 
 if (!-e $C{PERLSRCDIR}) {
@@ -104,39 +114,41 @@ if (!-e $C{PERLSRCDIR}) {
 GITSTUFF: {
 	my $d = pushd($C{PERLSRCDIR});
 	my $remhead;
-	eval {
-		git 'fetch';
-		$remhead = git 'log', '-1', '--format=%h', 'origin/'.$C{PERL_BRANCH}, {chomp=>1,show_cmd=>$VERBOSE};
-	1 } or do {
-		warn $@;
-		# Maybe we don't have network connectivity
-		if (prompt("Whoops, 'git' failed. Continue anyway? [Yn]","y")=~/^\s*y/i)
-			{ last GITSTUFF }
-		else { die "git fetch failed, aborting" }
-	};
-	my $myhead = git 'log', '-1', '--format=%h', $C{PERL_BRANCH}, {chomp=>1,show_cmd=>$VERBOSE};
-	say STDERR "# Local branch is at $myhead, remote is $remhead";
-	if ($myhead ne $remhead) {
-		git 'merge-base', '--is-ancestor', $remhead, $myhead, {allow_exit=>[0,1]};
-		if ($?==0) {
-			say STDERR "# However, it looks like $myhead is newer than $remhead, won't ask for update";
-			last GITSTUFF }
-		if (prompt("Would you like to update? WARNING: Unsaved local changes may be lost! [Yn]","y")=~/^\s*y/i) {
-			eval {
-				if ($C{CLOBBER_BRANCH}) {
-					say "WARNING: I am about to clobber the branch $C{PERL_BRANCH} in $C{PERLSRCDIR}!";
-					verify_perlsrc_modify(1);
-					git 'checkout', '-q', $C{PERLVER};
-					git 'branch', '-D', $C{PERL_BRANCH};
-					git 'branch', $C{PERL_BRANCH}, 'origin/'.$C{PERL_BRANCH};
-					git 'checkout', $C{PERL_BRANCH};
-				}
-				else {
-					git 'checkout', $C{PERL_BRANCH};
-					git 'pull';
-				}
-			1 } or die "$@\nA git step failed - perhaps you have uncommited changes in $C{PERLSRCDIR}?\n";
-			$needs_reconfig=1;
+	if ( prompt("Would you like to fetch any changes from master [yN]","n")=~/^\s*y/i ) {
+		eval {
+			git 'fetch';
+			$remhead = git 'log', '-1', '--format=%h', 'origin/'.$C{PERL_BRANCH}, {chomp=>1,show_cmd=>$VERBOSE};
+		1 } or do {
+			warn $@;
+			# Maybe we don't have network connectivity
+			if (prompt("Whoops, 'git' failed. Continue anyway? [Yn]","y")=~/^\s*y/i)
+				{ last GITSTUFF }
+			else { die "git fetch failed, aborting" }
+		};
+		my $myhead = git 'log', '-1', '--format=%h', $C{PERL_BRANCH}, {chomp=>1,show_cmd=>$VERBOSE};
+		say STDERR "# Local branch is at $myhead, remote is $remhead";
+		if ($myhead ne $remhead) {
+			git 'merge-base', '--is-ancestor', $remhead, $myhead, {allow_exit=>[0,1]};
+			if ($?==0) {
+				say STDERR "# However, it looks like $myhead is newer than $remhead, won't ask for update";
+				last GITSTUFF }
+			if (prompt("Would you like to update? WARNING: Unsaved local changes may be lost! [Yn]","y")=~/^\s*y/i) {
+				eval {
+					if ($C{CLOBBER_BRANCH}) {
+						say "WARNING: I am about to clobber the branch $C{PERL_BRANCH} in $C{PERLSRCDIR}!";
+						verify_perlsrc_modify(1);
+						git 'checkout', '-q', $C{PERLVER};
+						git 'branch', '-D', $C{PERL_BRANCH};
+						git 'branch', $C{PERL_BRANCH}, 'origin/'.$C{PERL_BRANCH};
+						git 'checkout', $C{PERL_BRANCH};
+					}
+					else {
+						git 'checkout', $C{PERL_BRANCH};
+						git 'pull';
+					}
+				1 } or die "$@\nA git step failed - perhaps you have uncommited changes in $C{PERLSRCDIR}?\n";
+				$needs_reconfig=1;
+			}
 		}
 	}
 	my $tags = git 'tag', '--list', {show_cmd=>$VERBOSE};
@@ -239,11 +251,16 @@ if ($needs_reconfig || $opts{forceext}) {
 	my $http = HTTP::Tiny->new;
 	$C{DOWNLOADDIR}->mkpath(1);
 	for my $modname ($C{EXTENSIONS}->@*) {
+		my $do_download = 1;
 		(my $basename = $modname)=~s/::/-/g;
 		my ($file) = (sort glob("$C{DOWNLOADDIR}/$basename-*.tar.gz"))[-1]; # get newest match (well, last-when-sorted match, anyway)
+		# if we already have a file, the user might want to just use that one
+		if ($file) {
+			if ( prompt("WARNING: $file exists, Keep or Check for newer? [Kc]","k")=~/^\s*k/i )
+				{ $do_download = 0 }
+		}
 		my $version;
-		# if we don't have the file or the user wants to redownload it
-		if ($opts{forceext} || ! -e $file) {
+		if ($do_download) {
 			my $apiuri = URI->new('https://fastapi.metacpan.org/v1/download_url');
 			$apiuri->path_segments( $apiuri->path_segments, $modname );
 			say STDERR "# Fetching $apiuri...";
@@ -267,9 +284,9 @@ if ($needs_reconfig || $opts{forceext}) {
 		}
 		# if we get here, we can use the existing file
 		else {
-			say STDERR "# Found $file ($version)...";
 			($version) = $file=~/([\d.]+)\.tar\.gz$/;
-			$file = file($file)
+			$file = file($file);
+			say STDERR "# Found $file ($version)...";
 		}
 		
 		my $tempd = dir( tempdir(DIR=>$C{DOWNLOADDIR}, CLEANUP => 1) );
@@ -296,6 +313,12 @@ if ($needs_reconfig || $opts{forceext}) {
 			dirmove($dirs[0], $targdir)
 				or die "move failed: $!";
 		}
+
+		if ($patches{$basename}) {
+			my $d = pushd($targdir);
+			try_patch_file($patches{$basename});
+		}
+
 	}
 	say STDERR "# Done setting up modules";
 }
@@ -345,7 +368,7 @@ if ($needs_reconfig || !-e $destdir || $opts{remakeout}) {
 		my $f = shift;
 		return if $f->is_dir;
 		if ( ( $f->basename=~/\.(?:h|a|pod)$/i ) || ( $f->basename eq 'extralibs.ld' && (-s $f)==1 )
-		  || ( $f->basename eq '.packlist' ) ) {
+		  || ( $f->basename eq '.packlist' ) || ( $f->basename eq 'sqlite3.c' ) ) {
 			print STDERR "removing $f\n";
 			$f->remove or die "failed to remove $f";
 		}

@@ -22,6 +22,89 @@
 **/
 
 /* -- Please see the documentation at http://webperl.zero-g.net/using.html -- */
+class PerlInterpreter {
+	static program = "./this.program"; // same value used internall by emscripten, but emscripten no longer allows access to it
+	static isInit = false;
+	static pointerSize = 4; // set later via ccall to webperl_pointer_size
+	static byPointer = {};
+
+	// from cop.h
+	static VOID   = 1; // G_VOID
+	static SCALAR = 2; // G_SCALAR
+	static LIST   = 3; // G_LIST
+
+	static initialize() {
+		// set the pointer size
+		PerlInterpreter.pointerSize = ccall("webperl_pointer_size", "number", [], []);
+
+		// build the C arguments
+		// NOTE: callMain uses stackAlloc, so this should be safe
+		var argc = 1;
+		var argv = stackAlloc(2 * PerlInterpreter.pointerSize);
+		var argv_ptr = argv >> 2;
+		HEAP32[argv_ptr++] = stringToUTF8OnStack(PerlInterpreter.program);
+		HEAP32[argv_ptr] = 0; // terminating NULL pointer
+
+		// call the C function
+		ccall("multiperl_init",null,["number","number","number"],[argc,argv,null]);
+	}
+	static terminate() {
+		ccall("multiperl_term",null,[],[]);
+	}
+
+	constructor() {
+		if (! PerlInterpreter.isInit) {
+			PerlInterpreter.initialize();
+			PerlInterpreter.isInit = true;
+		}
+
+		// build the C arguments from the JS arguments
+		// JS arguments may be a list of params or an Array object
+		var args;
+		if (arguments.length && Array.isArray(arguments[0])) {
+			args = arguments[0];
+			args.unshift(PerlInterpreter.program);
+		}
+		else {
+			args = [PerlInterpreter.program];
+			for (var i = 0; i < arguments.length; i++) {
+				args.push(arguments[i])
+			}
+		}
+
+		// convert the array to an argc/argv pair
+		// NOTE:: callMain uses stackAlloc, so this should be safe
+		var argc = args.length;
+		var argv = stackAlloc((argc + 1) * PerlInterpreter.pointerSize);
+		var argv_ptr = argv >> 2;
+		args.forEach((arg => {
+			HEAP32[argv_ptr++] = stringToUTF8OnStack(arg)
+		}));
+		HEAP32[argv_ptr] = 0; // terminating NULL pointer
+
+		// call the C function
+		this.interpreter = ccall("multiperl_create",null,["number","number"],[argc,argv]);
+
+		PerlInterpreter.byPointer[this.interpreter] = this;
+	}
+	run() {
+		return ccall("multiperl_start","number",["number"],[this.interpreter]);
+	}
+	quit() {
+		delete PerlInterpreter.byPointer[this.interpreter];
+		return ccall("multiperl_destroy","number",["number"],[this.interpreter]);
+	}
+
+	call(subname, args, context = PerlInterpreter.SCALAR) {
+		var json_in = JSON.stringify(args);
+		var json_out = ccall("webperl_call_perl","string",["number","string","string","number"],[this.interpreter,subname,json_in,context]);
+		return JSON.parse(json_out);
+	}
+	eval(code) {
+		var json = ccall("webperl_eval_perl","string",["number","string"],[this.interpreter,code]);
+		return JSON.parse(json);
+	}
+}
 
 var Module;
 var Perl = {
@@ -36,9 +119,9 @@ var Perl = {
 	initStepsLeft: 2, // Must match number of Perl.initStepFinished() calls!
 	readyCallback: null,
 	stdout_buf: "", stderr_buf: "", // for our default Perl.output implementation
-	dispatch: function (perl) {
-		Perl._call_code_args = Array.prototype.slice.call(arguments, 1);
-		Perl.eval(perl);
+	dispatch: function (interpreterPtr,perl) {
+		Perl._call_code_args = Array.prototype.slice.call(arguments, 2);
+		PerlInterpreter.byPointer[interpreterPtr].eval(perl);
 		if (Perl._call_code_error) {
 			var err = Perl._call_code_error;
 			delete Perl._call_code_error;
@@ -307,7 +390,9 @@ Perl.start = function (argv) {
 	Perl.changeState("Running");
 	try {
 		// Note: currently callMain doesn't seem to throw ExitStatus exceptions, see discussion in Perl.initStepFinished
-		Module.callMain(argv ? argv : Module.arguments);
+		//Module.callMain(argv ? argv : Module.arguments);
+		Perl.interpreter = new PerlInterpreter(argv ? argv : Module.arguments);
+		Perl.interpreter.run();
 	}
 	catch (e) {
 		if (e instanceof ExitStatus) {
@@ -322,7 +407,8 @@ Perl.eval = function (code) {
 		throw "Perl: can't call eval in state "+Perl.state;
 	if (Perl.trace) console.debug('Perl: ccall webperl_eval_perl',code);
 	try {
-		return ccall("webperl_eval_perl","string",["string"],[code]);
+		//return ccall("webperl_eval_perl","string",["string"],[code]);
+		return Perl.interpreter.eval(code);
 	}
 	catch (e) {
 		if (e instanceof ExitStatus) {
@@ -347,7 +433,8 @@ Perl.end = function () {
 	}
 	var status;
 	try {
-		status = ccall("emperl_end_perl","number",[],[]);
+		//status = ccall("emperl_end_perl","number",[],[]);
+		status = Perl.interpreter.quit(code);
 		// we know that emperl_end_perl only calls exit() on a nonzero exit code,
 		// which means no ExitStatus exception gets thrown on a zero exit code,
 		// so we *should* reach this point only with status==0

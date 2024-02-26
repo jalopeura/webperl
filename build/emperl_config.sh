@@ -9,12 +9,12 @@
 
 # A whitespace-separated list of modules to download and add to the build.
 # Note: Cpanel::JSON::XS is required for WebPerl!
-export EMPERL_EXTENSIONS="Cpanel::JSON::XS Devel::StackTrace Future"
+export EMPERL_EXTENSIONS="Cpanel::JSON::XS Devel::StackTrace Future Archive::Zip DBI DBD::SQLite"
 
 # Modules from the above list that have XS code need to be linked statically.
 # Add them here, separated by whitespace (see also the "static_ext" variable
 # in https://perl5.git.perl.org/perl.git/blob/HEAD:/Porting/Glossary ).
-export EMPERL_STATIC_EXT="Cpanel/JSON/XS"
+export EMPERL_STATIC_EXT="Cpanel/JSON/XS Storable Compress/Raw/Zlib DBI DBD/SQLite"
 
 # Do not edit (this gets this script's parent directory)
 BASEDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/.. >/dev/null && pwd )"
@@ -34,7 +34,7 @@ export EMPERL_PRELOAD_FILE="$EMPERL_OUTPUTDIR$EMPERL_PREFIX@$EMPERL_PREFIX"
 export EMPERL_OPTIMIZ="-O2"
 # Note: We explicitly disable ERROR_ON_UNDEFINED_SYMBOLS because it was enabled by default in Emscripten 1.38.13.
 #TODO Later: Why does --no-heap-copy not get rid of the "in memory growth we are forced to copy it again" assertion warning? (https://github.com/emscripten-core/emscripten/commit/ec764ace634f13bab5ae932912da53fe93ee1b69)
-export EMPERL_LINK_FLAGS="--pre-js common_preamble.js --no-heap-copy -s ERROR_ON_UNDEFINED_SYMBOLS=0 -s EXPORTED_FUNCTIONS=['_main','_emperl_end_perl','_Perl_call_sv','_Perl_call_pv','_Perl_call_method','_Perl_call_argv','_Perl_eval_pv','_Perl_eval_sv','_webperl_eval_perl'] -s EXPORTED_RUNTIME_METHODS=['callMain','ccall','cwrap']"
+export EMPERL_LINK_FLAGS="--pre-js common_preamble.js --no-heap-copy -s ERROR_ON_UNDEFINED_SYMBOLS=0 -s EXPORTED_FUNCTIONS=['_main','_emperl_end_perl','_webperl_eval_perl','_webperl_call_perl','_webperl_pointer_size','_multiperl_init','_multiperl_term','_multiperl_create','_multiperl_destroy','_multiperl_start'] -s EXPORTED_RUNTIME_METHODS=['callMain','ccall','cwrap']"
 
 export EMPERL_CC_DEBUG_FLAGS=""
 #export EMPERL_LD_DEBUG_FLAGS=""
